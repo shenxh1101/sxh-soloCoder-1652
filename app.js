@@ -5,7 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { init, save } = require('./src/models/database');
 const { queryAll, queryOne, run } = require('./src/models/database');
-const { pushToAllSupervisors } = require('./src/services/notification');
+const { pushToAllSupervisors, pushDailyReportToAll } = require('./src/services/notification');
 
 const proposalsRouter = require('./src/routes/proposals');
 const responsesRouter = require('./src/routes/responses');
@@ -110,8 +110,9 @@ function generateDailyReport() {
     });
 
     save();
-    pushToAllSupervisors('daily_report', '每日进度报表已生成', `${reportDate}的办理进度报表已自动生成`);
-    console.log(`[${new Date().toISOString()}] 每日进度报表生成完成`);
+    const totalRecords = categories.length + units.length;
+    pushDailyReportToAll(reportDate, totalRecords);
+    console.log(`[${new Date().toISOString()}] 每日进度报表生成完成，共${totalRecords}条记录`);
   } catch (err) {
     console.error(`[${new Date().toISOString()}] 报表生成失败:`, err.message);
   }

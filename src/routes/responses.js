@@ -22,14 +22,14 @@ function getSupervisorForUrgency(urgency, region) {
   return queryOne(sql, params);
 }
 
-function createReminderOrder(proposal, unit, urgency) {
-  const level = proposal.overdue_days > 30 ? 'critical' : proposal.overdue_days > 15 ? 'urgent' : 'normal';
+function createReminderOrder(proposal, unit) {
+  const level = proposal.urgency === 'critical' ? 'critical' : proposal.urgency === 'urgent' ? 'urgent' : 'normal';
   const supervisor = getSupervisorForUrgency(level, null);
 
   const id = uuidv4();
   run(
     'INSERT INTO reminder_orders (id, proposal_id, handling_unit_id, level, supervisor_id, urgency, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [id, proposal.id, unit.id, level, supervisor ? supervisor.id : null, urgency || 'normal', 'pending']
+    [id, proposal.id, unit.id, level, supervisor ? supervisor.id : null, proposal.urgency || 'normal', 'pending']
   );
   save();
 
@@ -37,7 +37,7 @@ function createReminderOrder(proposal, unit, urgency) {
     pushToSupervisor(
       'reminder_created',
       '新催办工单',
-      `建议"${proposal.title}"已超期${proposal.overdue_days}天，催办等级：${level}，请及时督办`,
+      `建议"${proposal.title}"已超期${proposal.overdue_days}天，事项紧急度：${proposal.urgency}，催办等级：${level}，督办人员：${supervisor.name}，请及时督办`,
       supervisor.id
     );
   }
@@ -45,11 +45,12 @@ function createReminderOrder(proposal, unit, urgency) {
   pushToHandlingUnit(
     'reminder_notice',
     '催办通知',
-    `您承办的建议"${proposal.title}"已超期${proposal.overdue_days}天，催办等级：${level}，请尽快办理`,
+    `您承办的建议"${proposal.title}"已超期${proposal.overdue_days}天，事项紧急度：${proposal.urgency}，催办等级：${level}，请尽快办理`,
     unit.id
   );
 
-  return queryOne('SELECT * FROM reminder_orders WHERE id = ?', [id]);
+  const reminder = queryOne('SELECT ro.*, s.name as supervisor_name FROM reminder_orders ro LEFT JOIN supervisors s ON ro.supervisor_id = s.id WHERE ro.id = ?', [id]);
+  return reminder;
 }
 
 router.post('/', (req, res) => {
@@ -97,27 +98,26 @@ router.post('/', (req, res) => {
 
   if (isOverdue) {
     const proposalWithOverdue = { ...proposal, overdue_days: overdueDays };
-    const reminder = createReminderOrder(proposalWithOverdue, unit, proposal.urgency);
+    const reminder = createReminderOrder(proposalWithOverdue, unit);
 
-    if (overdueDays > 30) {
-      run('UPDATE handling_units SET is_locked = 1 WHERE id = ?', [handling_unit_id]);
-      save();
+    run('UPDATE handling_units SET is_locked = 1 WHERE id = ?', [handling_unit_id]);
+    save();
 
-      pushToHandlingUnit(
-        'unit_locked',
-        '接收权限已锁定',
-        `由于建议"${proposal.title}"超期${overdueDays}天未办理，您单位的接收权限已被锁定`,
-        handling_unit_id
-      );
-    }
+    pushToHandlingUnit(
+      'unit_locked',
+      '接收权限已锁定',
+      `由于建议"${proposal.title}"超期${overdueDays}天未办理，您单位的接收权限已被锁定，请联系管理员解锁`,
+      handling_unit_id
+    );
 
     return res.status(201).json({
       code: 201,
-      message: '答复已提交（超期），已生成催办工单',
+      message: '答复已提交（超期），已生成催办工单并锁定承办单位接收权限',
       data: {
         response: queryOne('SELECT * FROM responses WHERE id = ?', [id]),
         reminder_order: reminder,
         overdue_days: overdueDays,
+        unit_locked: true,
       },
     });
   }
@@ -187,12 +187,10 @@ router.post('/check-overdue', (req, res) => {
       [proposal.id, 'pending']
     );
     if (!existing) {
-      const reminder = createReminderOrder(proposal, unit, proposal.urgency);
+      const reminder = createReminderOrder(proposal, unit);
       results.push(reminder);
 
-      if (proposal.overdue_days > 30) {
-        run('UPDATE handling_units SET is_locked = 1 WHERE id = ?', [unit.id]);
-      }
+      run('UPDATE handling_units SET is_locked = 1 WHERE id = ?', [unit.id]);
     }
   });
 

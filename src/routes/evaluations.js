@@ -27,6 +27,11 @@ router.post('/', (req, res) => {
     return res.status(400).json({ code: 400, message: '满意度值无效，可选：satisfied/neutral/dissatisfied' });
   }
 
+  const response = queryOne('SELECT * FROM responses WHERE proposal_id = ? ORDER BY created_at DESC LIMIT 1', [proposal_id]);
+  if (!response) {
+    return res.status(400).json({ code: 400, message: '该建议尚未收到承办单位答复，暂时无法评价，请等待答复后再进行评价' });
+  }
+
   const id = uuidv4();
   run(
     'INSERT INTO evaluations (id, proposal_id, representative_id, satisfaction, comment) VALUES (?, ?, ?, ?, ?)',
